@@ -1,7 +1,7 @@
 {
-  "name": "cuserskazam-mahmooddownloadsopen-news",
-  "private": true,
-  "version": "0.0.0",
+  "name": "open-news",
+  "description": "AI-powered global news intelligence platform",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

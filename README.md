@@ -1,73 +1,85 @@
-# React + TypeScript + Vite
+# 🌐 Open News: AI-Powered Global Intelligence
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Open News is a premium, open-source AI search engine designed to transform how we consume global news. By leveraging advanced analytical AI and real-time web context, it delivers deep-dive, structured reports that go beyond surface-level headlines.
 
-Currently, two official plugins are available:
+![Open News Interface Preview](https://github.com/ahmadkazimmusic-sudo/Open-News/raw/main/public/preview.png)
+*(Note: Replace with actual screenshot after deployment)*
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## ✨ Key Features
 
-## React Compiler
+-   **🔍 Live Intelligence**: Integrates real-time data from trusted global sources (Reuters, BBC, Al Jazeera, Bloomberg, etc.) via the Tavily Search API.
+-   **📰 Structured Briefs**: Generates comprehensive news reports with Background, Key Developments, Analysis, and Outlook sections.
+-   **📊 Data Visualizations**: Automatically renders interactive charts (via Recharts) for topics involving numerical data and distributions.
+-   **🎭 Bias & Sentiment Analysis**: Provides visual indicators for news sentiment and political bias ratings to help identify framing and perspective.
+-   **🌍 Polyglot Support**: Instant translation and reporting in English, Spanish, French, German, Japanese, and Arabic.
+-   **📸 Snapshot Sharing**: One-click export of news briefs to high-fidelity PNG images for social sharing.
+-   **🌓 Premium UI**: A sleek, modern interface with native Dark/Light mode support and smooth micro-animations.
+-   **💾 Local History**: Securely stores your search history in your browser for quick reference.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🚀 Tech Stack
 
-## Expanding the ESLint configuration
+-   **Core**: [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vitejs.dev/)
+-   **AI Infrastructure**: [OpenAI SDK](https://github.com/openai/openai-node) (routing through [Hugging Face](https://huggingface.co/))
+-   **Search Engine**: [Tavily AI](https://tavily.com/)
+-   **Visualization**: [Recharts](https://recharts.org/)
+-   **Markdown Rendering**: [react-markdown](https://github.com/remarkjs/react-markdown)
+-   **Icons & Assets**: [Lucide React](https://lucide.dev/), [html-to-image](https://github.com/tsayen/html-to-image)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🛠️ Getting Started
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Prerequisites
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+-   Node.js (v18 or higher)
+-   npm or yarn
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### Installation
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/ahmadkazimmusic-sudo/Open-News.git
+    cd Open-News
+    ```
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+3.  **Configure Environment Variables**:
+    Create a `.env` file in the root directory and add your API keys:
+    ```env
+    VITE_HF_TOKEN=your_hugging_face_token
+    VITE_TAVILY_API_KEY=your_tavily_api_key
+    ```
+
+4.  **Run Development Server**:
+    ```bash
+    npm run dev
+    ```
+
+## 🔐 Environment Variables
+
+To run this project, you will need to add the following environment variables to your `.env` file:
+
+| Variable | Description | Source |
+| :--- | :--- | :--- |
+| `VITE_HF_TOKEN` | Hugging Face Access Token for LLM access. | [Hugging Face Settings](https://huggingface.co/settings/tokens) |
+| `VITE_TAVILY_API_KEY` | API Key for web search capabilities. | [Tavily Dashboard](https://tavily.com/) |
+
+## 🤝 Contributing
+
+We welcome contributions! Whether it's a bug fix, feature request, or UI improvement, please feel free to:
+
+1.  Fork the Project
+2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4.  Push to the Branch (`git push origin feature/AmazingFeature`)
+5.  Open a Pull Request
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+---
+
+Built with ❤️ by the Open News Community.
