@@ -5,6 +5,8 @@ import { OpenAI } from 'openai'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { toPng } from 'html-to-image'
 import { Camera } from 'lucide-react'
+import { useAuth } from './auth/AuthContext'
+import { AuthModal } from './components/AuthModal'
 import './App.css'
 
 const hfClient = new OpenAI({
@@ -104,7 +106,27 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// Generate a deterministic gradient color pair from a string
+function avatarGradient(str: string): [string, string] {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  const h1 = Math.abs(hash % 360)
+  const h2 = (h1 + 40) % 360
+  return [`hsl(${h1},70%,55%)`, `hsl(${h2},70%,45%)`]
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+}
+
 function App() {
+  const { user, signOut, loading } = useAuth()
+
   const [query, setQuery] = useState('')
   const [isFocused, setIsFocused] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
@@ -118,11 +140,25 @@ function App() {
   const [sessionId, setSessionId] = useState<string>(`sess-${Date.now()}`)
   const [history, setHistory] = useState<HistorySession[]>([])
 
+  const [profileOpen, setProfileOpen] = useState(false)
+  const profileRef = useRef<HTMLDivElement>(null)
+
   const [streamingText, setStreamingText] = useState('')
   const [streamingSources, setStreamingSources] = useState<{ title: string, url: string }[] | null>(null)
 
   const chatbarRef = useRef<HTMLDivElement>(null)
   const bottomAnchorRef = useRef<HTMLDivElement>(null)
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   // Initialize theme and history from localStorage
   useEffect(() => {
@@ -376,6 +412,23 @@ ${fullText}`;
   const shellClassName = isConversationMode ? 'app-shell conversation-mode' : 'app-shell'
   const searchShellClassName = `search-shell${isExpanded ? ' expanded' : ''}${isConversationMode ? ' conversation-mode' : ''}`
 
+  // Derived avatar values
+  const displayName = user?.user_metadata?.full_name || user?.email || 'User'
+  const initials = getInitials(displayName)
+  const [grad1, grad2] = avatarGradient(user?.email || displayName)
+
+  if (loading) {
+    return (
+      <div className="auth-loading">
+        <span className="auth-spinner" style={{ width: 32, height: 32 }} />
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <AuthModal />
+  }
+
   return (
     <main className={shellClassName}>
       <header className="brand">
@@ -386,52 +439,131 @@ ${fullText}`;
           </div>
           <p>AI-powered search engine for trusted global news sources.</p>
         </div>
+
+        {/* Profile Avatar + Dropdown */}
         <div className="brand-actions">
-          <select
-            className="language-selector"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            aria-label="Language"
-          >
-            <option value="English">EN</option>
-            <option value="Spanish">ES</option>
-            <option value="French">FR</option>
-            <option value="German">DE</option>
-            <option value="Japanese">JA</option>
-            <option value="Arabic">AR</option>
-          </select>
-          <button
-            className="icon-btn"
-            onClick={() => setIsSidebarOpen(true)}
-            aria-label="History"
-            title="History"
-          >
-            ☰
-          </button>
-          <button
-            className="theme-toggle"
-            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            aria-label="Toggle theme"
-            title="Toggle theme"
-          >
-            {theme === 'dark' ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="5"></circle>
-                <line x1="12" y1="1" x2="12" y2="4"></line>
-                <line x1="12" y1="20" x2="12" y2="23"></line>
-                <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"></line>
-                <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"></line>
-                <line x1="1" y1="12" x2="4" y2="12"></line>
-                <line x1="20" y1="12" x2="23" y2="12"></line>
-                <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"></line>
-                <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"></line>
-              </svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-              </svg>
+          <div className="profile-wrapper" ref={profileRef}>
+            <button
+              className={`profile-avatar-btn${profileOpen ? ' active' : ''}`}
+              onClick={() => setProfileOpen(o => !o)}
+              aria-label="Open profile menu"
+              aria-expanded={profileOpen}
+              id="profile-avatar-btn"
+              style={{ background: `linear-gradient(135deg, ${grad1}, ${grad2})` }}
+            >
+              {initials}
+            </button>
+
+            {profileOpen && (
+              <div className="profile-dropdown" role="menu">
+                {/* Profile info */}
+                <div className="profile-menu-info">
+                  <div
+                    className="profile-menu-avatar"
+                    style={{ background: `linear-gradient(135deg, ${grad1}, ${grad2})` }}
+                  >
+                    {initials}
+                  </div>
+                  <div className="profile-menu-identity">
+                    <span className="profile-menu-name">{displayName}</span>
+                    <span className="profile-menu-email">{user.email}</span>
+                  </div>
+                </div>
+
+                <div className="profile-menu-divider" />
+
+                {/* Theme toggle */}
+                <button
+                  className="profile-menu-item"
+                  onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+                  role="menuitem"
+                  id="profile-theme-toggle"
+                >
+                  <span className="profile-menu-icon">
+                    {theme === 'dark' ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="4"/>
+                        <line x1="12" y1="20" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
+                        <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="4" y2="12"/>
+                        <line x1="20" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
+                        <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                      </svg>
+                    )}
+                  </span>
+                  {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                </button>
+
+                {/* Language selector */}
+                <div className="profile-menu-item profile-menu-lang" role="menuitem">
+                  <span className="profile-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"/>
+                      <line x1="2" y1="12" x2="22" y2="12"/>
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                  </span>
+                  Language
+                  <select
+                    className="profile-lang-select"
+                    value={language}
+                    onChange={e => setLanguage(e.target.value)}
+                    aria-label="Response language"
+                    id="profile-language-select"
+                  >
+                    <option value="English">English</option>
+                    <option value="Spanish">Español</option>
+                    <option value="French">Français</option>
+                    <option value="German">Deutsch</option>
+                    <option value="Japanese">日本語</option>
+                    <option value="Arabic">العربية</option>
+                  </select>
+                </div>
+
+                {/* History */}
+                <button
+                  className="profile-menu-item"
+                  onClick={() => { setIsSidebarOpen(true); setProfileOpen(false) }}
+                  role="menuitem"
+                  id="profile-history-btn"
+                >
+                  <span className="profile-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="23 4 23 10 17 10"/>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                    </svg>
+                  </span>
+                  History
+                </button>
+
+                <div className="profile-menu-divider" />
+
+                {/* Sign out */}
+                <button
+                  className="profile-menu-item profile-menu-signout"
+                  onClick={() => { signOut(); setProfileOpen(false) }}
+                  role="menuitem"
+                  id="profile-signout-btn"
+                >
+                  <span className="profile-menu-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                      <polyline points="16 17 21 12 16 7"/>
+                      <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                  </span>
+                  Sign Out
+                </button>
+              </div>
             )}
-          </button>
+          </div>
         </div>
       </header>
 
