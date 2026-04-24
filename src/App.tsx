@@ -5,7 +5,7 @@ import { OpenAI } from 'openai'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { toPng } from 'html-to-image'
 import { Camera } from 'lucide-react'
-import { useAuth } from './auth/AuthContext'
+import { useAuth } from './auth/useAuth'
 import { AuthModal } from './components/AuthModal'
 import './App.css'
 
@@ -91,7 +91,13 @@ const LogoIcon = () => (
   </svg>
 )
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+}
+
+const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="custom-tooltip">
@@ -124,6 +130,8 @@ function getInitials(name: string): string {
     .toUpperCase()
 }
 
+const makeSessionId = () => `sess-${Date.now()}`;
+
 function App() {
   const { user, signOut, loading } = useAuth()
 
@@ -134,11 +142,23 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('open-news-theme') as 'dark' | 'light';
+    return saved || 'dark';
+  })
   const [language, setLanguage] = useState('English')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [sessionId, setSessionId] = useState<string>(`sess-${Date.now()}`)
-  const [history, setHistory] = useState<HistorySession[]>([])
+  const [sessionId, setSessionId] = useState<string>(makeSessionId)
+  const [history, setHistory] = useState<HistorySession[]>(() => {
+    const saved = localStorage.getItem('open-news-history');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch { /* ignore */ }
+    }
+    return [];
+  })
 
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
@@ -146,7 +166,6 @@ function App() {
   const [streamingText, setStreamingText] = useState('')
   const [streamingSources, setStreamingSources] = useState<{ title: string, url: string }[] | null>(null)
 
-  const chatbarRef = useRef<HTMLDivElement>(null)
   const bottomAnchorRef = useRef<HTMLDivElement>(null)
 
   // Close profile dropdown when clicking outside
@@ -160,21 +179,10 @@ function App() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Initialize theme and history from localStorage
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('open-news-theme') as 'dark' | 'light';
-    if (savedTheme) {
-      setTheme(savedTheme);
-    }
-    const savedHistory = localStorage.getItem('open-news-history');
-    if (savedHistory) {
-      setHistory(JSON.parse(savedHistory));
-    }
-  }, []);
-
   // Save to history when messages change
   useEffect(() => {
     if (messages.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHistory(prev => {
       const existingIdx = prev.findIndex(s => s.id === sessionId);
       const title = messages.find(m => m.role === 'user')?.text || 'New Chat';
@@ -192,7 +200,7 @@ function App() {
   }, [messages, sessionId]);
 
   const startNewChat = () => {
-    setSessionId(`sess-${Date.now()}`);
+    setSessionId(makeSessionId());
     setMessages([]);
     setQuery('');
     setIsSidebarOpen(false);
@@ -237,10 +245,10 @@ function App() {
     localStorage.setItem('open-news-theme', theme);
   }, [theme]);
 
-  // Auto-scroll to bottom whenever messages update or loading starts
+  // Auto-scroll to bottom whenever messages update, streaming text changes, or loading starts
   useEffect(() => {
     bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, isSearching])
+  }, [messages, streamingText, isSearching])
 
   const runSearch = async (event?: FormEvent<HTMLFormElement>, queryOverride?: string) => {
     if (event) event.preventDefault()
@@ -329,12 +337,18 @@ Guidelines:
       let fullText = '';
       setStreamingSources(sources);
 
-      for await (const chunk of stream) {
-        const contentDelta = chunk.choices[0]?.delta?.content || '';
-        if (contentDelta) {
-          fullText += contentDelta;
-          setStreamingText(fullText);
+      let streamError = false;
+      try {
+        for await (const chunk of stream) {
+          const contentDelta = chunk.choices[0]?.delta?.content || '';
+          if (contentDelta) {
+            fullText += contentDelta;
+            setStreamingText(fullText);
+          }
         }
+      } catch (streamErr) {
+        streamError = true;
+        console.warn('Stream interrupted:', streamErr);
       }
 
       const assistantId = `assistant-${Date.now()}`;
@@ -350,6 +364,8 @@ Guidelines:
 
       setStreamingText('')
       setStreamingSources(null)
+
+      if (streamError) return;
 
       // Step 4: Generate follow up questions & Metadata
       const metadataPrompt = `Based on the following news brief, analyze and return ONLY a single valid JSON object representing metadata. The JSON must have the following schema, and no other text:
@@ -389,16 +405,18 @@ ${fullText}`;
       } catch (e) {
         console.warn("Failed to parse metadata", e);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error:', error);
+      const msg = error instanceof Error ? error.message : 'Unknown error occurred';
+      const status = (error as { status?: number }).status;
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          text: error.status === 401
-            ? `## ⚠️ Authentication Error\n\nYour AI service token (Hugging Face) appears to have expired or is invalid. Please update the \`VITE_HF_TOKEN\` in your \`.env\` file with a fresh token from your Hugging Face settings.\n\nError details: ${error.message}`
-            : `Error communicating with the AI service: ${error.message}`
+          text: status === 401
+            ? `## ⚠️ Authentication Error\n\nYour AI service token (Hugging Face) appears to have expired or is invalid. Please update the \`VITE_HF_TOKEN\` in your \`.env\` file with a fresh token from your Hugging Face settings.\n\nError details: ${msg}`
+            : `Error communicating with the AI service: ${msg}`
         }
       ]);
     } finally {
@@ -482,19 +500,19 @@ ${fullText}`;
                   <span className="profile-menu-icon">
                     {theme === 'dark' ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="5"/>
-                        <line x1="12" y1="1" x2="12" y2="4"/>
-                        <line x1="12" y1="20" x2="12" y2="23"/>
-                        <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"/>
-                        <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"/>
-                        <line x1="1" y1="12" x2="4" y2="12"/>
-                        <line x1="20" y1="12" x2="23" y2="12"/>
-                        <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"/>
-                        <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"/>
+                        <circle cx="12" cy="12" r="5" />
+                        <line x1="12" y1="1" x2="12" y2="4" />
+                        <line x1="12" y1="20" x2="12" y2="23" />
+                        <line x1="4.22" y1="4.22" x2="6.34" y2="6.34" />
+                        <line x1="17.66" y1="17.66" x2="19.78" y2="19.78" />
+                        <line x1="1" y1="12" x2="4" y2="12" />
+                        <line x1="20" y1="12" x2="23" y2="12" />
+                        <line x1="4.22" y1="19.78" x2="6.34" y2="17.66" />
+                        <line x1="17.66" y1="6.34" x2="19.78" y2="4.22" />
                       </svg>
                     ) : (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                       </svg>
                     )}
                   </span>
@@ -505,9 +523,9 @@ ${fullText}`;
                 <div className="profile-menu-item profile-menu-lang" role="menuitem">
                   <span className="profile-menu-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10"/>
-                      <line x1="2" y1="12" x2="22" y2="12"/>
-                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                     </svg>
                   </span>
                   Language
@@ -536,8 +554,8 @@ ${fullText}`;
                 >
                   <span className="profile-menu-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 4 23 10 17 10"/>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                     </svg>
                   </span>
                   History
@@ -554,9 +572,9 @@ ${fullText}`;
                 >
                   <span className="profile-menu-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                      <polyline points="16 17 21 12 16 7"/>
-                      <line x1="21" y1="12" x2="9" y2="12"/>
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                   </span>
                   Sign Out
@@ -581,7 +599,7 @@ ${fullText}`;
           {history.length === 0 ? (
             <p className="empty-history">No past briefs yet.</p>
           ) : (
-            history.sort((a, b) => b.updatedAt - a.updatedAt).map(session => (
+            [...history].sort((a, b) => b.updatedAt - a.updatedAt).map(session => (
               <div
                 key={session.id}
                 className={`history-item ${session.id === sessionId ? 'active' : ''}`}
@@ -624,10 +642,7 @@ ${fullText}`;
           </button>
         </form>
 
-        <div
-          ref={chatbarRef}
-          className={isExpanded ? 'chatbar visible' : 'chatbar'}
-        >
+        <div className={isExpanded ? 'chatbar visible' : 'chatbar'}>
           {messages.map((message) => (
             <article key={message.id} id={`msg-${message.id}`} className={`message-row ${message.role}`}>
               <span className="message-author">
@@ -664,7 +679,8 @@ ${fullText}`;
                     <span className="sources-label">Sources</span>
                     <div className="source-icons">
                       {message.sources.map((src, i) => {
-                        const hostname = new URL(src.url).hostname;
+                        let hostname = src.url;
+                        try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
                         const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
                         return (
                           <a
@@ -683,8 +699,10 @@ ${fullText}`;
                                 width={22}
                                 height={22}
                                 onError={(e) => {
-                                  (e.target as HTMLImageElement).style.display = 'none';
-                                  (e.target as HTMLImageElement).nextElementSibling!.textContent = hostname[0].toUpperCase();
+                                  const img = e.target as HTMLImageElement;
+                                  img.style.display = 'none';
+                                  const fallback = img.nextElementSibling;
+                                  if (fallback) fallback.textContent = hostname[0].toUpperCase();
                                 }}
                               />
                               <span className="source-icon-fallback"></span>
@@ -802,7 +820,8 @@ ${fullText}`;
                     <span className="sources-label">Sources</span>
                     <div className="source-icons">
                       {streamingSources.map((src, i) => {
-                        const hostname = new URL(src.url).hostname;
+                        let hostname = src.url;
+                        try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
                         const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
                         return (
                           <a
@@ -819,8 +838,10 @@ ${fullText}`;
                                 width={22}
                                 height={22}
                                 onError={(e) => {
-                                  (e.target as HTMLImageElement).style.display = 'none';
-                                  (e.target as HTMLImageElement).nextElementSibling!.textContent = hostname[0].toUpperCase();
+                                  const img = e.target as HTMLImageElement;
+                                  img.style.display = 'none';
+                                  const fallback = img.nextElementSibling;
+                                  if (fallback) fallback.textContent = hostname[0].toUpperCase();
                                 }}
                               />
                               <span className="source-icon-fallback"></span>
