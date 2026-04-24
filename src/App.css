@@ -1391,7 +1391,7 @@
   background: linear-gradient(160deg, rgba(18, 20, 28, 0.98) 0%, rgba(10, 12, 18, 0.99) 100%);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 28px;
-  padding: 32px 32px 24px;
+  padding: 24px 32px 20px;
   box-shadow:
     0 50px 100px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 122, 24, 0.1),
@@ -1422,7 +1422,7 @@
 
 /* Header */
 .auth-header {
-  margin-bottom: 22px;
+  margin-bottom: 16px;
   position: relative;
   z-index: 1;
 }
@@ -1431,7 +1431,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .auth-brand-name {
@@ -1467,7 +1467,7 @@
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 14px;
   padding: 4px;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
   gap: 0;
   position: relative;
   z-index: 1;
@@ -1526,7 +1526,7 @@
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 10px;
   position: relative;
   z-index: 1;
 }
@@ -1534,7 +1534,7 @@
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .auth-field label {
@@ -1589,7 +1589,7 @@
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 11px;
-  padding: 11px 40px 11px 14px;
+  padding: 9px 40px 9px 14px;
   color: var(--accent-white);
   font: inherit;
   font-size: 0.9rem;
@@ -1734,7 +1734,7 @@
 
 /* Footer */
 .auth-footer {
-  margin-top: 18px;
+  margin-top: 14px;
   display: flex;
   justify-content: center;
   position: relative;
