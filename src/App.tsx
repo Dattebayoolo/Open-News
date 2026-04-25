@@ -9,6 +9,7 @@ import { useAuth } from './auth/useAuth'
 import { useCredits } from './auth/useCredits'
 import { AuthModal } from './components/AuthModal'
 import BreakingNews from './components/BreakingNews'
+import Developing from './components/Developing'
 import './App.css'
 
 const openrouterClient = new OpenAI({
@@ -132,6 +133,15 @@ const BreakingNewsIcon = () => (
   </svg>
 )
 
+const DevelopingIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+    <circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" />
+  </svg>
+)
+
 const LimitReachedIcon = ({ size = 48 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <circle cx="12" cy="12" r="9" stroke="url(#limit-grad)" strokeWidth="2" />
@@ -219,7 +229,7 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
 
-  const [page, setPage] = useState<'ai-mode' | 'breaking-news'>('ai-mode')
+  const [page, setPage] = useState<'ai-mode' | 'breaking-news' | 'developing'>('ai-mode')
 
   const [streamingText, setStreamingText] = useState('')
   const [streamingSources, setStreamingSources] = useState<{ title: string, url: string }[] | null>(null)
@@ -549,6 +559,16 @@ ${fullText}`;
             </span>
             Breaking News
           </button>
+          <button
+            className={`nav-item${page === 'developing' ? ' active' : ''}`}
+            aria-current={page === 'developing' ? 'page' : undefined}
+            onClick={() => setPage('developing')}
+          >
+            <span className="nav-icon">
+              <DevelopingIcon />
+            </span>
+            Developing
+          </button>
         </div>
       </nav>
 
@@ -744,6 +764,8 @@ ${fullText}`;
 
       {page === 'breaking-news' ? (
         <BreakingNews consume={consume} />
+      ) : page === 'developing' ? (
+        <Developing consume={consume} />
       ) : (
         <section className={searchShellClassName}>
           <form className="search-form" onSubmit={runSearch}>
