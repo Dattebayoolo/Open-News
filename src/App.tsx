@@ -7,6 +7,7 @@ import { toPng } from 'html-to-image'
 import { Camera } from 'lucide-react'
 import { useAuth } from './auth/useAuth'
 import { AuthModal } from './components/AuthModal'
+import BreakingNews from './components/BreakingNews'
 import './App.css'
 
 const openrouterClient = new OpenAI({
@@ -97,6 +98,38 @@ const LogoIcon = () => (
   </svg>
 )
 
+const AIModeIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M12 2L13.5 8.5L20 10L13.5 11.5L12 18L10.5 11.5L4 10L10.5 8.5L12 2Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+      fill="none"
+    />
+    <circle cx="12" cy="10" r="1.5" fill="currentColor" />
+  </svg>
+)
+
+const BreakingNewsIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect
+      x="3"
+      y="4"
+      width="18"
+      height="16"
+      rx="2"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      fill="none"
+      strokeDasharray="3 2"
+    />
+    <path d="M7 9H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M7 13H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="17.5" cy="16" r="1.5" fill="#ff4d4d" stroke="none" />
+  </svg>
+)
+
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{ value: number }>;
@@ -168,6 +201,8 @@ function App() {
 
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
+
+  const [page, setPage] = useState<'ai-mode' | 'breaking-news'>('ai-mode')
 
   const [streamingText, setStreamingText] = useState('')
   const [streamingSources, setStreamingSources] = useState<{ title: string, url: string }[] | null>(null)
@@ -455,6 +490,32 @@ ${fullText}`;
 
   return (
     <main className={shellClassName}>
+      {/* Navbar */}
+      <nav className="app-nav">
+        <div className="nav-items">
+          <button
+            className={`nav-item${page === 'ai-mode' ? ' active' : ''}`}
+            aria-current={page === 'ai-mode' ? 'page' : undefined}
+            onClick={() => setPage('ai-mode')}
+          >
+            <span className="nav-icon">
+              <AIModeIcon />
+            </span>
+            AI Mode
+          </button>
+          <button
+            className={`nav-item${page === 'breaking-news' ? ' active' : ''}`}
+            aria-current={page === 'breaking-news' ? 'page' : undefined}
+            onClick={() => setPage('breaking-news')}
+          >
+            <span className="nav-icon">
+              <BreakingNewsIcon />
+            </span>
+            Breaking News
+          </button>
+        </div>
+      </nav>
+
       <header className="brand">
         <div className="brand-title">
           <div className="brand-header-row">
@@ -631,283 +692,287 @@ ${fullText}`;
         </div>
       </aside>
 
-      <section className={searchShellClassName}>
-        <form className="search-form" onSubmit={runSearch}>
-          <span className="command-prefix">search://</span>
-          <input
-            type="text"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            placeholder="Ask about finance, policy, geopolitics, technology..."
-            aria-label="Search news"
-          />
-          <button type="submit" disabled={isSearching}>
-            {isSearching ? 'Thinking...' : 'Search'}
-          </button>
-        </form>
+      {page === 'breaking-news' ? (
+        <BreakingNews />
+      ) : (
+        <section className={searchShellClassName}>
+          <form className="search-form" onSubmit={runSearch}>
+            <span className="command-prefix">search://</span>
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              placeholder="Ask about finance, policy, geopolitics, technology..."
+              aria-label="Search news"
+            />
+            <button type="submit" disabled={isSearching}>
+              {isSearching ? 'Thinking...' : 'Search'}
+            </button>
+          </form>
 
-        <div className={isExpanded ? 'chatbar visible' : 'chatbar'}>
-          {messages.map((message) => (
-            <article key={message.id} id={`msg-${message.id}`} className={`message-row ${message.role}`}>
-              <span className="message-author">
-                {message.role === 'assistant' ? 'open-news' : 'you'}
-              </span>
-              <div className="message-body">
-                {message.role === 'assistant' && (
-                  <div className="message-actions-row">
-                    <button
-                      className="copy-btn"
-                      onClick={() => exportAsImage(message.id)}
-                      title="Snapshot Brief"
-                      aria-label="Snapshot Brief"
-                    >
-                      <Camera size={16} />
-                    </button>
-                    <button
-                      className="copy-btn"
-                      onClick={() => {
-                        navigator.clipboard.writeText(message.text);
-                        setCopiedId(message.id);
-                        setTimeout(() => setCopiedId(null), 2000);
-                      }}
-                      title="Copy response"
-                      aria-label="Copy response"
-                    >
-                      {copiedId === message.id ? '✓' : '⧉'}
-                    </button>
-                  </div>
-                )}
-                <ReactMarkdown>{message.text}</ReactMarkdown>
-                {message.sources && message.sources.length > 0 && (
-                  <div className="sources-list">
-                    <span className="sources-label">Sources</span>
-                    <div className="source-icons">
-                      {message.sources.map((src, i) => {
-                        let hostname = src.url;
-                        try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
-                        const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
-                        return (
-                          <a
-                            key={i}
-                            href={src.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="source-icon-link"
-                            title={src.title}
-                            aria-label={src.title}
-                          >
-                            <div className="source-icon-circle">
-                              <img
-                                src={faviconUrl}
-                                alt={hostname}
-                                width={22}
-                                height={22}
-                                onError={(e) => {
-                                  const img = e.target as HTMLImageElement;
-                                  img.style.display = 'none';
-                                  const fallback = img.nextElementSibling;
-                                  if (fallback) fallback.textContent = hostname[0].toUpperCase();
-                                }}
-                              />
-                              <span className="source-icon-fallback"></span>
-                            </div>
-                            <span className="source-icon-label">{hostname.replace('www.', '')}</span>
-                          </a>
-                        );
-                      })}
+          <div className={isExpanded ? 'chatbar visible' : 'chatbar'}>
+            {messages.map((message) => (
+              <article key={message.id} id={`msg-${message.id}`} className={`message-row ${message.role}`}>
+                <span className="message-author">
+                  {message.role === 'assistant' ? 'open-news' : 'you'}
+                </span>
+                <div className="message-body">
+                  {message.role === 'assistant' && (
+                    <div className="message-actions-row">
+                      <button
+                        className="copy-btn"
+                        onClick={() => exportAsImage(message.id)}
+                        title="Snapshot Brief"
+                        aria-label="Snapshot Brief"
+                      >
+                        <Camera size={16} />
+                      </button>
+                      <button
+                        className="copy-btn"
+                        onClick={() => {
+                          navigator.clipboard.writeText(message.text);
+                          setCopiedId(message.id);
+                          setTimeout(() => setCopiedId(null), 2000);
+                        }}
+                        title="Copy response"
+                        aria-label="Copy response"
+                      >
+                        {copiedId === message.id ? '✓' : '⧉'}
+                      </button>
                     </div>
-                  </div>
-                )}
-
-                {message.chartData && message.chartData.data && message.chartData.data.length > 0 && (
-                  <div className="message-chart-container">
-                    <div className="message-chart-header">
-                      <h4>{message.chartData.title}</h4>
-                    </div>
-                    <div className="message-chart-content">
-                      <ResponsiveContainer width="100%" height={220}>
-                        <AreaChart data={message.chartData.data} margin={{ top: 20, right: 10, bottom: 0, left: 0 }}>
-                          <defs>
-                            <linearGradient id="chart-grad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#ff7a18" stopOpacity={0.3} />
-                              <stop offset="95%" stopColor="#ff7a18" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
-                          <XAxis
-                            dataKey="label"
-                            stroke="rgba(255,255,255,0.2)"
-                            fontSize={10}
-                            tickLine={false}
-                            axisLine={false}
-                            dy={10}
-                          />
-                          <YAxis
-                            stroke="rgba(255,255,255,0.2)"
-                            fontSize={10}
-                            tickLine={false}
-                            axisLine={false}
-                            dx={-10}
-                          />
-                          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
-                          <Area
-                            type="monotone"
-                            dataKey="value"
-                            stroke="#ff7a18"
-                            strokeWidth={3}
-                            fillOpacity={1}
-                            fill="url(#chart-grad)"
-                            animationDuration={1500}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                )}
-
-                {(message.sentiment !== undefined || message.bias) && (
-                  <div className="metadata-row">
-                    {message.sentiment !== undefined && (
-                      <div className="sentiment-meter">
-                        <div className="sentiment-header">
-                          <span className="meta-label">Sentiment</span>
-                          <span className="sentiment-score" style={{ color: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}>
-                            {message.sentiment}<span className="sentiment-denom">/100</span>
-                          </span>
-                        </div>
-                        <div className="progress-bar">
-                          <div className="progress-fill" style={{ width: `${message.sentiment}%`, background: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}></div>
-                        </div>
-                        <div className="progress-ticks">
-                          <span>0</span>
-                          <span>25</span>
-                          <span>50</span>
-                          <span>75</span>
-                          <span>100</span>
-                        </div>
-                        <div className="sentiment-labels">
-                          <span>Negative</span>
-                          <span>Neutral</span>
-                          <span>Positive</span>
-                        </div>
+                  )}
+                  <ReactMarkdown>{message.text}</ReactMarkdown>
+                  {message.sources && message.sources.length > 0 && (
+                    <div className="sources-list">
+                      <span className="sources-label">Sources</span>
+                      <div className="source-icons">
+                        {message.sources.map((src, i) => {
+                          let hostname = src.url;
+                          try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
+                          const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
+                          return (
+                            <a
+                              key={i}
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="source-icon-link"
+                              title={src.title}
+                              aria-label={src.title}
+                            >
+                              <div className="source-icon-circle">
+                                <img
+                                  src={faviconUrl}
+                                  alt={hostname}
+                                  width={22}
+                                  height={22}
+                                  onError={(e) => {
+                                    const img = e.target as HTMLImageElement;
+                                    img.style.display = 'none';
+                                    const fallback = img.nextElementSibling;
+                                    if (fallback) fallback.textContent = hostname[0].toUpperCase();
+                                  }}
+                                />
+                                <span className="source-icon-fallback"></span>
+                              </div>
+                              <span className="source-icon-label">{hostname.replace('www.', '')}</span>
+                            </a>
+                          );
+                        })}
                       </div>
-                    )}
-                    {message.bias && (
-                      <div className="bias-meter-container">
-                        <div className="bias-header">
-                          <span className="meta-label">Bias Rating</span>
-                          <span className={`bias-badge bias-${message.bias.toLowerCase()}`}>{message.bias}</span>
-                        </div>
-                        <div className="bias-spectrum">
-                          <div className="bias-track"></div>
-                          <div className="bias-ticks">
-                            <span></span><span></span><span></span><span></span><span></span>
-                          </div>
-                          <div
-                            className={`bias-marker ${message.bias.toLowerCase()}`}
-                            style={{
-                              left: message.bias === 'Left' ? '10%' :
-                                message.bias === 'Right' ? '90%' : '50%'
-                            }}
-                          >
-                            <span className="bias-marker-value">
-                              {message.bias === 'Left' ? '10' : message.bias === 'Right' ? '90' : '50'}
+                    </div>
+                  )}
+
+                  {message.chartData && message.chartData.data && message.chartData.data.length > 0 && (
+                    <div className="message-chart-container">
+                      <div className="message-chart-header">
+                        <h4>{message.chartData.title}</h4>
+                      </div>
+                      <div className="message-chart-content">
+                        <ResponsiveContainer width="100%" height={220}>
+                          <AreaChart data={message.chartData.data} margin={{ top: 20, right: 10, bottom: 0, left: 0 }}>
+                            <defs>
+                              <linearGradient id="chart-grad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#ff7a18" stopOpacity={0.3} />
+                                <stop offset="95%" stopColor="#ff7a18" stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
+                            <XAxis
+                              dataKey="label"
+                              stroke="rgba(255,255,255,0.2)"
+                              fontSize={10}
+                              tickLine={false}
+                              axisLine={false}
+                              dy={10}
+                            />
+                            <YAxis
+                              stroke="rgba(255,255,255,0.2)"
+                              fontSize={10}
+                              tickLine={false}
+                              axisLine={false}
+                              dx={-10}
+                            />
+                            <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
+                            <Area
+                              type="monotone"
+                              dataKey="value"
+                              stroke="#ff7a18"
+                              strokeWidth={3}
+                              fillOpacity={1}
+                              fill="url(#chart-grad)"
+                              animationDuration={1500}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {(message.sentiment !== undefined || message.bias) && (
+                    <div className="metadata-row">
+                      {message.sentiment !== undefined && (
+                        <div className="sentiment-meter">
+                          <div className="sentiment-header">
+                            <span className="meta-label">Sentiment</span>
+                            <span className="sentiment-score" style={{ color: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}>
+                              {message.sentiment}<span className="sentiment-denom">/100</span>
                             </span>
                           </div>
+                          <div className="progress-bar">
+                            <div className="progress-fill" style={{ width: `${message.sentiment}%`, background: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}></div>
+                          </div>
+                          <div className="progress-ticks">
+                            <span>0</span>
+                            <span>25</span>
+                            <span>50</span>
+                            <span>75</span>
+                            <span>100</span>
+                          </div>
+                          <div className="sentiment-labels">
+                            <span>Negative</span>
+                            <span>Neutral</span>
+                            <span>Positive</span>
+                          </div>
                         </div>
-                        <div className="bias-labels">
-                          <span>Left</span>
-                          <span>Center</span>
-                          <span>Right</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {message.followUps && message.followUps.length > 0 && (
-                  <div className="follow-ups">
-                    {message.followUps.map((q, i) => (
-                      <button
-                        key={i}
-                        className="follow-up-chip"
-                        onClick={() => runSearch(undefined, q)}
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </article>
-          ))}
-          {streamingText && (
-            <article className="message-row assistant">
-              <span className="message-author">open-news</span>
-              <div className="message-body">
-                <ReactMarkdown>{streamingText}</ReactMarkdown>
-                {streamingSources && streamingSources.length > 0 && (
-                  <div className="sources-list">
-                    <span className="sources-label">Sources</span>
-                    <div className="source-icons">
-                      {streamingSources.map((src, i) => {
-                        let hostname = src.url;
-                        try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
-                        const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
-                        return (
-                          <a
-                            key={i}
-                            href={src.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="source-icon-link"
-                          >
-                            <div className="source-icon-circle">
-                              <img
-                                src={faviconUrl}
-                                alt={hostname}
-                                width={22}
-                                height={22}
-                                onError={(e) => {
-                                  const img = e.target as HTMLImageElement;
-                                  img.style.display = 'none';
-                                  const fallback = img.nextElementSibling;
-                                  if (fallback) fallback.textContent = hostname[0].toUpperCase();
-                                }}
-                              />
-                              <span className="source-icon-fallback"></span>
+                      )}
+                      {message.bias && (
+                        <div className="bias-meter-container">
+                          <div className="bias-header">
+                            <span className="meta-label">Bias Rating</span>
+                            <span className={`bias-badge bias-${message.bias.toLowerCase()}`}>{message.bias}</span>
+                          </div>
+                          <div className="bias-spectrum">
+                            <div className="bias-track"></div>
+                            <div className="bias-ticks">
+                              <span></span><span></span><span></span><span></span><span></span>
                             </div>
-                            <span className="source-icon-label">{hostname.replace('www.', '')}</span>
-                          </a>
-                        );
-                      })}
+                            <div
+                              className={`bias-marker ${message.bias.toLowerCase()}`}
+                              style={{
+                                left: message.bias === 'Left' ? '10%' :
+                                  message.bias === 'Right' ? '90%' : '50%'
+                              }}
+                            >
+                              <span className="bias-marker-value">
+                                {message.bias === 'Left' ? '10' : message.bias === 'Right' ? '90' : '50'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="bias-labels">
+                            <span>Left</span>
+                            <span>Center</span>
+                            <span>Right</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-            </article>
-          )}
+                  )}
 
-          {isSearching && !streamingText && (
-            <article className="message-row assistant loading">
-              <span className="message-author">open-news</span>
-              <div className="ai-loader">
-                <div className={`ai-loader-orb phase-${loadingPhase}`}>
-                  <LogoIcon />
+                  {message.followUps && message.followUps.length > 0 && (
+                    <div className="follow-ups">
+                      {message.followUps.map((q, i) => (
+                        <button
+                          key={i}
+                          className="follow-up-chip"
+                          onClick={() => runSearch(undefined, q)}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="ai-loader-text">
-                  {loadingPhase === 'web' && <><span className="phase-label web">Searching the web</span><span className="phase-sub">Pulling live sources via Tavily</span></>}
-                  {loadingPhase === 'thinking' && <><span className="phase-label thinking">Thinking</span><span className="phase-sub">Analyzing sources & forming brief</span></>}
-                  {loadingPhase === 'responding' && <><span className="phase-label responding">Responding</span><span className="phase-sub">Writing your brief now</span></>}
+              </article>
+            ))}
+            {streamingText && (
+              <article className="message-row assistant">
+                <span className="message-author">open-news</span>
+                <div className="message-body">
+                  <ReactMarkdown>{streamingText}</ReactMarkdown>
+                  {streamingSources && streamingSources.length > 0 && (
+                    <div className="sources-list">
+                      <span className="sources-label">Sources</span>
+                      <div className="source-icons">
+                        {streamingSources.map((src, i) => {
+                          let hostname = src.url;
+                          try { hostname = new URL(src.url).hostname; } catch { /* keep raw url */ }
+                          const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain=${hostname}`;
+                          return (
+                            <a
+                              key={i}
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="source-icon-link"
+                            >
+                              <div className="source-icon-circle">
+                                <img
+                                  src={faviconUrl}
+                                  alt={hostname}
+                                  width={22}
+                                  height={22}
+                                  onError={(e) => {
+                                    const img = e.target as HTMLImageElement;
+                                    img.style.display = 'none';
+                                    const fallback = img.nextElementSibling;
+                                    if (fallback) fallback.textContent = hostname[0].toUpperCase();
+                                  }}
+                                />
+                                <span className="source-icon-fallback"></span>
+                              </div>
+                              <span className="source-icon-label">{hostname.replace('www.', '')}</span>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </article>
-          )}
-          <div ref={bottomAnchorRef} style={{ height: 1 }} />
-        </div>
-      </section>
+              </article>
+            )}
+
+            {isSearching && !streamingText && (
+              <article className="message-row assistant loading">
+                <span className="message-author">open-news</span>
+                <div className="ai-loader">
+                  <div className={`ai-loader-orb phase-${loadingPhase}`}>
+                    <LogoIcon />
+                  </div>
+                  <div className="ai-loader-text">
+                    {loadingPhase === 'web' && <><span className="phase-label web">Searching the web</span><span className="phase-sub">Pulling live sources via Tavily</span></>}
+                    {loadingPhase === 'thinking' && <><span className="phase-label thinking">Thinking</span><span className="phase-sub">Analyzing sources & forming brief</span></>}
+                    {loadingPhase === 'responding' && <><span className="phase-label responding">Responding</span><span className="phase-sub">Writing your brief now</span></>}
+                  </div>
+                </div>
+              </article>
+            )}
+            <div ref={bottomAnchorRef} style={{ height: 1 }} />
+          </div>
+        </section>
+      )}
     </main>
   )
 }
