@@ -33,7 +33,7 @@ Open News is a premium, open-source AI search engine designed to transform how w
 ## 🚀 Tech Stack
 
 - **Core**: [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vitejs.dev/)
-- **AI Infrastructure**: [OpenAI SDK](https://github.com/openai/openai-node) (routing through [Hugging Face](https://huggingface.co/))
+- **AI Infrastructure**: [OpenAI SDK](https://github.com/openai/openai-node) (routing through [OpenRouter](https://openrouter.ai/))
 - **Search Engine**: [Tavily AI](https://tavily.com/)
 - **Visualization**: [Recharts](https://recharts.org/)
 - **Markdown Rendering**: [react-markdown](https://github.com/remarkjs/react-markdown)
@@ -57,7 +57,7 @@ cd Open-News
 npm install
 
 # 3. Configure Environment Variables (.env)
-# VITE_HF_TOKEN=your_hugging_face_token
+# VITE_OPENROUTER_API_KEY=your_openrouter_api_key
 # VITE_TAVILY_API_KEY=your_tavily_api_key
 
 # 4. Run Development Server
@@ -68,7 +68,7 @@ npm run dev
 
 | Variable | Description | Source |
 | :--- | :--- | :--- |
-| `VITE_HF_TOKEN` | Hugging Face Access Token for LLM access. | [Hugging Face Settings](https://huggingface.co/settings/tokens) |
+| `VITE_OPENROUTER_API_KEY` | OpenRouter API key for LLM access (uses the `openrouter/free` endpoint by default). | [OpenRouter Keys](https://openrouter.ai/keys) |
 | `VITE_TAVILY_API_KEY` | API Key for web search capabilities. | [Tavily Dashboard](https://tavily.com/) |
 
 ## 🤝 Contributing

@@ -9,11 +9,17 @@ import { useAuth } from './auth/useAuth'
 import { AuthModal } from './components/AuthModal'
 import './App.css'
 
-const hfClient = new OpenAI({
-  baseURL: "https://router.huggingface.co/v1",
-  apiKey: import.meta.env.VITE_HF_TOKEN || 'missing-token',
+const openrouterClient = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || 'missing-token',
   dangerouslyAllowBrowser: true, // required to run the openai sdk in the frontend
+  defaultHeaders: {
+    "HTTP-Referer": typeof window !== 'undefined' ? window.location.href : '',
+    "X-Title": "Open News",
+  },
 });
+
+const OPENROUTER_MODEL = "openrouter/free";
 
 interface ChartData {
   title: string;
@@ -321,8 +327,8 @@ Guidelines:
       setLoadingPhase('responding')
       await new Promise(r => setTimeout(r, 100)); // brief pause
 
-      const stream = await hfClient.chat.completions.create({
-        model: "google/gemma-4-31B-it:novita",
+      const stream = await openrouterClient.chat.completions.create({
+        model: OPENROUTER_MODEL,
         max_tokens: 2048,
         stream: true,
         messages: [
@@ -331,8 +337,8 @@ Guidelines:
             role: msg.role as 'assistant' | 'user' | 'system',
             content: msg.text
           }))
-        ]
-      });
+        ],
+      } as Parameters<typeof openrouterClient.chat.completions.create>[0]) as AsyncIterable<any>;
 
       let fullText = '';
       setStreamingSources(sources);
@@ -383,11 +389,11 @@ Brief:
 ${fullText}`;
 
       try {
-        const metaCompletion = await hfClient.chat.completions.create({
-          model: "google/gemma-4-31B-it:novita",
+        const metaCompletion = await openrouterClient.chat.completions.create({
+          model: OPENROUTER_MODEL,
           max_tokens: 350,
           messages: [{ role: 'user', content: metadataPrompt }],
-        });
+        } as any);
 
         const jsonContent = metaCompletion.choices[0]?.message?.content || '{}';
         const match = jsonContent.match(/\{[\s\S]*\}/); // extract json object
@@ -415,7 +421,7 @@ ${fullText}`;
           id: `assistant-${Date.now()}`,
           role: 'assistant',
           text: status === 401
-            ? `## ⚠️ Authentication Error\n\nYour AI service token (Hugging Face) appears to have expired or is invalid. Please update the \`VITE_HF_TOKEN\` in your \`.env\` file with a fresh token from your Hugging Face settings.\n\nError details: ${msg}`
+            ? `## ⚠️ Authentication Error\n\nYour AI service token (OpenRouter) appears to have expired or is invalid. Please update the \`VITE_OPENROUTER_API_KEY\` in your \`.env\` file with a fresh key from https://openrouter.ai/keys.\n\nError details: ${msg}`
             : `Error communicating with the AI service: ${msg}`
         }
       ]);
@@ -765,29 +771,56 @@ ${fullText}`;
                   <div className="metadata-row">
                     {message.sentiment !== undefined && (
                       <div className="sentiment-meter">
-                        <span className="meta-label">Sentiment</span>
+                        <div className="sentiment-header">
+                          <span className="meta-label">Sentiment</span>
+                          <span className="sentiment-score" style={{ color: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}>
+                            {message.sentiment}<span className="sentiment-denom">/100</span>
+                          </span>
+                        </div>
                         <div className="progress-bar">
                           <div className="progress-fill" style={{ width: `${message.sentiment}%`, background: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}></div>
+                        </div>
+                        <div className="progress-ticks">
+                          <span>0</span>
+                          <span>25</span>
+                          <span>50</span>
+                          <span>75</span>
+                          <span>100</span>
+                        </div>
+                        <div className="sentiment-labels">
+                          <span>Negative</span>
+                          <span>Neutral</span>
+                          <span>Positive</span>
                         </div>
                       </div>
                     )}
                     {message.bias && (
                       <div className="bias-meter-container">
-                        <span className="meta-label">Bias Rating: <strong>{message.bias}</strong></span>
+                        <div className="bias-header">
+                          <span className="meta-label">Bias Rating</span>
+                          <span className={`bias-badge bias-${message.bias.toLowerCase()}`}>{message.bias}</span>
+                        </div>
                         <div className="bias-spectrum">
                           <div className="bias-track"></div>
+                          <div className="bias-ticks">
+                            <span></span><span></span><span></span><span></span><span></span>
+                          </div>
                           <div
                             className={`bias-marker ${message.bias.toLowerCase()}`}
                             style={{
-                              left: message.bias === 'Left' ? '15%' :
-                                message.bias === 'Right' ? '85%' : '50%'
+                              left: message.bias === 'Left' ? '10%' :
+                                message.bias === 'Right' ? '90%' : '50%'
                             }}
-                          ></div>
-                          <div className="bias-labels">
-                            <span>Left</span>
-                            <span>Center</span>
-                            <span>Right</span>
+                          >
+                            <span className="bias-marker-value">
+                              {message.bias === 'Left' ? '10' : message.bias === 'Right' ? '90' : '50'}
+                            </span>
                           </div>
+                        </div>
+                        <div className="bias-labels">
+                          <span>Left</span>
+                          <span>Center</span>
+                          <span>Right</span>
                         </div>
                       </div>
                     )}
