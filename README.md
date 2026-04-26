@@ -2,7 +2,7 @@
   <img src="https://github.com/Dattebayoolo/Open-News/raw/main/public/preview.png" alt="Open News Interface Preview" width="850" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
 </p>
 
-# 🌐 Open News
+<h1 align="center">🌐 Open News</h1>
 
 <p align="center">
   <strong>AI-Powered Global Intelligence</strong>
