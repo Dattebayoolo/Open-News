@@ -1,19 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Tooltip, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Tooltip, Popup, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
+import { fetchTavilyNews, getNewsKey, timeAgo } from '../lib/news'
+import type { NewsItem } from '../lib/news'
 
 interface HeatMapProps {
   consume: (amount?: number) => boolean
   credits: number
   limit: number
-}
-
-interface NewsItem {
-  title: string
-  url: string
-  content: string
-  source: string
-  published?: string
 }
 
 interface RegionConfig {
@@ -33,59 +27,65 @@ const REGION_CONFIGS: RegionConfig[] = [
   { id: 'oceania', label: 'Oceania', center: [135, -25], keywords: ['australia', 'new zealand', 'oceania', 'sydney', 'melbourne'] },
 ]
 
-function extractSource(url: string): string {
+const HEATMAP_REFRESH_COST = 14
+const HEATMAP_CACHE_KEY = 'open-news-heatmap-cache-v1'
+const HEATMAP_CACHE_TTL_MS = 60 * 60 * 1000
+
+interface HeatMapCachePayload {
+  savedAt: number
+  items: NewsItem[]
+}
+
+function readHeatMapCache(): HeatMapCachePayload | null {
   try {
-    return new URL(url).hostname.replace('www.', '')
+    const raw = localStorage.getItem(HEATMAP_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as HeatMapCachePayload
+    if (!parsed || !Array.isArray(parsed.items) || typeof parsed.savedAt !== 'number') return null
+    return parsed
   } catch {
-    return url
+    return null
   }
 }
 
+function writeHeatMapCache(items: NewsItem[]) {
+  try {
+    const payload: HeatMapCachePayload = { savedAt: Date.now(), items }
+    localStorage.setItem(HEATMAP_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function MapSizeStabilizer({ watch }: { watch: number }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const t1 = setTimeout(() => map.invalidateSize(), 0)
+    const t2 = setTimeout(() => map.invalidateSize(), 220)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+  }, [map, watch])
+
+  useEffect(() => {
+    const onResize = () => map.invalidateSize()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [map])
+
+  return null
+}
+
 async function fetchHeatMapNews(): Promise<NewsItem[]> {
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: import.meta.env.VITE_TAVILY_API_KEY,
-      query: 'breaking world news by region and country today',
-      search_depth: 'advanced',
-      max_results: 14,
-      include_domains: [
-        'reuters.com', 'bbc.com', 'apnews.com', 'bloomberg.com', 'ft.com',
-        'theguardian.com', 'nytimes.com', 'wsj.com', 'aljazeera.com', 'economist.com'
-      ],
-      include_answer: false,
-      sort_by: 'date',
-    })
-  })
-  if (!response.ok) throw new Error('Failed to load heat map data')
-  const data = await response.json()
-  const results = data.results || []
-  return results.map((r: { title: string; url: string; content: string; published_date?: string }) => ({
-    title: r.title,
-    url: r.url,
-    content: r.content,
-    source: extractSource(r.url),
-    published: r.published_date,
-  }))
+  return fetchTavilyNews('breaking world news by region and country today', HEATMAP_REFRESH_COST)
 }
 
 function classifyRegion(item: NewsItem): string {
   const text = `${item.title} ${item.content}`.toLowerCase()
   const match = REGION_CONFIGS.find((r) => r.keywords.some((k) => text.includes(k)))
   return match ? match.id : 'europe'
-}
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return ''
-  const then = new Date(dateStr)
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - then.getTime()) / 60000)
-  if (diff < 1) return 'just now'
-  if (diff < 60) return `${diff}m ago`
-  const hours = Math.floor(diff / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
 }
 
 export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
@@ -95,8 +95,41 @@ export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [selectedRegion, setSelectedRegion] = useState<string>('europe')
   const [lastRefreshCost, setLastRefreshCost] = useState(0)
+  const [tileFailed, setTileFailed] = useState(false)
+  const [tileLoaded, setTileLoaded] = useState(false)
 
-  const load = useCallback(async () => {
+  const hydrateFromItems = (news: NewsItem[]) => {
+    setItems(news)
+    setLastUpdated(new Date())
+    const counts = new Map<string, number>()
+    for (const item of news) {
+      const r = classifyRegion(item)
+      counts.set(r, (counts.get(r) || 0) + 1)
+    }
+    let topId = 'europe'
+    let topCount = -1
+    for (const region of REGION_CONFIGS) {
+      const c = counts.get(region.id) || 0
+      if (c > topCount) {
+        topCount = c
+        topId = region.id
+      }
+    }
+    setSelectedRegion((prev) => (counts.get(prev) ? prev : topId))
+  }
+
+  const load = useCallback(async (forceRefresh = false) => {
+    const cached = readHeatMapCache()
+    const cacheFresh = Boolean(cached && (Date.now() - cached.savedAt) < HEATMAP_CACHE_TTL_MS)
+
+    if (!forceRefresh && cached && cacheFresh) {
+      setError(null)
+      setLoading(false)
+      setLastRefreshCost(0)
+      hydrateFromItems(cached.items)
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
@@ -108,37 +141,35 @@ export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
         return
       }
       setLastRefreshCost(cost)
-      setItems(news)
-      setLastUpdated(new Date())
-
-      // Pick most active region based on this refresh
-      const counts = new Map<string, number>()
-      for (const item of news) {
-        const r = classifyRegion(item)
-        counts.set(r, (counts.get(r) || 0) + 1)
-      }
-      let topId = selectedRegion
-      let topCount = -1
-      for (const region of REGION_CONFIGS) {
-        const c = counts.get(region.id) || 0
-        if (c > topCount) {
-          topCount = c
-          topId = region.id
-        }
-      }
-      setSelectedRegion(topId)
+      hydrateFromItems(news)
+      writeHeatMapCache(news)
     } catch (e) {
+      if (cached && cached.items.length > 0) {
+        // Network failed: fall back to stale cache without consuming extra credits.
+        setLastRefreshCost(0)
+        hydrateFromItems(cached.items)
+        setError(null)
+        setLoading(false)
+        return
+      }
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
       setLoading(false)
     }
-  }, [consume, selectedRegion])
+  }, [consume])
 
   useEffect(() => {
-    const t = setTimeout(() => { void load() }, 0)
-    const interval = setInterval(load, 5 * 60 * 1000)
+    const t = setTimeout(() => { void load(false) }, 0)
+    const interval = setInterval(() => { void load(false) }, HEATMAP_CACHE_TTL_MS)
     return () => { clearTimeout(t); clearInterval(interval) }
   }, [load])
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!tileLoaded) setTileFailed(true)
+    }, 3500)
+    return () => clearTimeout(t)
+  }, [tileLoaded])
 
   const byRegion = useMemo(() => {
     const grouped: Record<string, NewsItem[]> = {}
@@ -157,7 +188,7 @@ export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
       }
     })
   }, [byRegion])
-  const projectedCost = Math.max(1, items.length || 8)
+  const projectedCost = Math.max(1, items.length || HEATMAP_REFRESH_COST)
   const hasEnoughCredits = credits >= projectedCost
   const isCreditError = Boolean(error && error.toLowerCase().includes('credit'))
 
@@ -173,7 +204,7 @@ export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
           <span className="bn-updated">
             Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
-          <button className="bn-refresh" onClick={load} disabled={loading} title="Refresh">
+          <button className="bn-refresh" onClick={() => { void load(true) }} disabled={loading} title="Refresh">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
@@ -219,89 +250,82 @@ export default function HeatMap({ consume, credits, limit }: HeatMapProps) {
             </svg>
           )}
           <span>{error}</span>
-          <button onClick={load}>Retry</button>
+          <button onClick={() => { void load(true) }}>Retry</button>
         </div>
       )}
 
-      {!error && (
-        <div className="heatmap-shell">
-          <div className="heatmap-world">
-            <div className="heatmap-grid-overlay" />
-            <MapContainer
-              center={[18, 10]}
-              zoom={2}
-              minZoom={2}
-              maxZoom={6}
-              zoomControl={false}
-              scrollWheelZoom
-              className="heatmap-world-map"
-            >
+      <div className="heatmap-shell">
+        <div className="heatmap-world">
+          <div className="heatmap-grid-overlay" />
+          <MapContainer
+            center={[18, 10]}
+            zoom={2}
+            minZoom={2}
+            maxZoom={6}
+            zoomControl={false}
+            scrollWheelZoom
+            className="heatmap-world-map"
+          >
+            <MapSizeStabilizer watch={items.length} />
+            <TileLayer
+              attribution='&copy; OpenStreetMap contributors &copy; CARTO'
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              eventHandlers={{
+                tileerror: () => setTileFailed(true),
+                tileload: () => setTileLoaded(true),
+              }}
+            />
+            {tileFailed && (
               <TileLayer
-                attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution='&copy; OpenStreetMap contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
+            )}
 
-              {hotspotData.map((spot) => {
-                const isActive = spot.id === selectedRegion
-                const intensity = Math.max(0.35, Math.min(1, spot.score / 4))
-                const radius = 5 + spot.score * 1.4
-                return (
-                  <CircleMarker
-                    key={spot.id}
-                    center={[spot.center[1], spot.center[0]]}
-                    radius={radius}
-                    pathOptions={{
-                      color: isActive ? '#ffd166' : '#ff7a18',
-                      weight: isActive ? 2 : 1.4,
-                      fillColor: '#ff7a18',
-                      fillOpacity: intensity * 0.65,
-                    }}
-                    eventHandlers={{ click: () => setSelectedRegion(spot.id) }}
-                  >
-                    <Tooltip direction="top" offset={[0, -8]} opacity={1} className="heatmap-tooltip" permanent={isActive}>
-                      {spot.label} ({spot.score})
-                    </Tooltip>
-                    {isActive && spot.items.length > 0 && (
-                      <Popup
-                        className="heatmap-point-popup"
-                        autoPan
-                        closeButton={false}
-                        offset={[0, -12]}
-                      >
-                        <div className="heatmap-popover-cards">
-                          {spot.items.slice(0, 3).map((item, idx) => (
-                            <a key={`${spot.id}-${idx}`} href={item.url} target="_blank" rel="noreferrer" className="heatmap-pop-card">
-                              <span className="heatmap-pop-source">{item.source}</span>
-                              <p>{item.title}</p>
-                              {item.published && <span className="heatmap-pop-time">{timeAgo(item.published)}</span>}
-                            </a>
-                          ))}
-                        </div>
-                      </Popup>
-                    )}
-                  </CircleMarker>
-                )
-              })}
-            </MapContainer>
-          </div>
-
-          <div className="heatmap-region-rail">
-            {hotspotData
-              .filter((h) => h.score > 0)
-              .sort((a, b) => b.score - a.score)
-              .map((spot) => (
-                <button
+            {hotspotData.map((spot) => {
+              const isActive = spot.id === selectedRegion
+              const intensity = Math.max(0.35, Math.min(1, spot.score / 4))
+              const radius = 5 + spot.score * 1.4
+              return (
+                <CircleMarker
                   key={spot.id}
-                  className={`heatmap-rail-item${spot.id === selectedRegion ? ' active' : ''}`}
-                  onClick={() => setSelectedRegion(spot.id)}
+                  center={[spot.center[1], spot.center[0]]}
+                  radius={radius}
+                  pathOptions={{
+                    color: isActive ? '#ffd166' : '#ff7a18',
+                    weight: isActive ? 2 : 1.4,
+                    fillColor: '#ff7a18',
+                    fillOpacity: intensity * 0.65,
+                  }}
+                  eventHandlers={{ click: () => setSelectedRegion(spot.id) }}
                 >
-                  <span>{spot.label}</span>
-                  <strong>{spot.score}</strong>
-                </button>
-              ))}
-          </div>
+                  <Tooltip direction="top" offset={[0, -8]} opacity={1} className="heatmap-tooltip" permanent={isActive}>
+                    {spot.label} ({spot.score})
+                  </Tooltip>
+                  {isActive && spot.items.length > 0 && (
+                    <Popup
+                      className="heatmap-point-popup"
+                      autoPan
+                      closeButton={false}
+                      offset={[0, -12]}
+                    >
+                      <div className="heatmap-popover-cards">
+                        {spot.items.slice(0, 3).map((item, idx) => (
+                          <a key={`${spot.id}-${getNewsKey(item, idx)}`} href={item.url} target="_blank" rel="noreferrer" className="heatmap-pop-card">
+                            <span className="heatmap-pop-source">{item.source}</span>
+                            <p>{item.title}</p>
+                            {item.published && <span className="heatmap-pop-time">{timeAgo(item.published)}</span>}
+                          </a>
+                        ))}
+                      </div>
+                    </Popup>
+                  )}
+                </CircleMarker>
+              )
+            })}
+          </MapContainer>
         </div>
-      )}
+      </div>
     </div>
   )
 }

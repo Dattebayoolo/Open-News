@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { Suspense, lazy, useState, useEffect, useRef } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { OpenAI } from 'openai'
@@ -8,12 +8,14 @@ import { Camera } from 'lucide-react'
 import { useAuth } from './auth/useAuth'
 import { useCredits } from './auth/useCredits'
 import { AuthModal } from './components/AuthModal'
-import BreakingNews from './components/BreakingNews'
-import Developing from './components/Developing'
-import Radar from './components/Radar'
-import AccountSettings from './components/AccountSettings'
-import HeatMap from './components/HeatMap'
+import { TRUSTED_NEWS_DOMAINS, extractSource } from './lib/news'
 import './App.css'
+
+const BreakingNews = lazy(() => import('./components/BreakingNews'))
+const Developing = lazy(() => import('./components/Developing'))
+const Radar = lazy(() => import('./components/Radar'))
+const AccountSettings = lazy(() => import('./components/AccountSettings'))
+const HeatMap = lazy(() => import('./components/HeatMap'))
 
 const openrouterClient = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
@@ -32,16 +34,76 @@ interface ChartData {
   data: { label: string; value: number }[];
 }
 
+interface SourceItem {
+  title: string
+  url: string
+  content?: string
+}
+
+interface ClaimItem {
+  text: string
+  status: 'Reported' | 'Confirmed' | 'Disputed' | 'Unclear'
+}
+
+interface TimelineItem {
+  time: string
+  event: string
+  source?: string
+}
+
+interface RelatedStory {
+  title: string
+  angle: 'Background' | 'Latest Update' | 'Opposing Viewpoint' | 'Economic Impact' | 'Policy Impact' | 'Other'
+  note: string
+}
+
+interface EntityItem {
+  name: string
+  type: 'Person' | 'Company' | 'Country' | 'Market' | 'Conflict' | 'Organization' | 'Other'
+  note: string
+}
+
+interface SourcePerspective {
+  source: string
+  headline: string
+  framing: string
+  url: string
+}
+
+interface SentimentDriver {
+  label: string
+  weight: number
+  direction: 'Positive' | 'Negative' | 'Neutral'
+}
+
+interface BiasSignal {
+  label: string
+  evidence: string
+}
+
 interface ChatMessage {
   id: string
   role: 'assistant' | 'user'
   text: string
-  sources?: { title: string; url: string }[]
+  sources?: SourceItem[]
   followUps?: string[]
   sentiment?: number
+  sentimentLabel?: 'Negative' | 'Mixed' | 'Neutral' | 'Positive'
+  sentimentConfidence?: number
+  sentimentRationale?: string
+  sentimentDrivers?: SentimentDriver[]
   bias?: string
+  biasScore?: number
+  biasConfidence?: number
+  biasRationale?: string
+  biasSignals?: BiasSignal[]
   chartData?: ChartData
   limitReached?: boolean
+  claims?: ClaimItem[]
+  timeline?: TimelineItem[]
+  relatedStories?: RelatedStory[]
+  entities?: EntityItem[]
+  sourcePerspectives?: SourcePerspective[]
 }
 
 interface TavilyResult {
@@ -49,6 +111,10 @@ interface TavilyResult {
   url: string
   content: string
 }
+
+type SourceFilter = 'All Trusted' | 'Wire Only' | 'Reuters' | 'BBC' | 'Al Jazeera' | 'Bloomberg' | 'Financial Times'
+type RecencyFilter = 'Latest' | 'Past 24 Hours' | 'Past Week'
+type RegionFilter = 'Global' | 'North America' | 'Europe' | 'Middle East' | 'Asia' | 'Africa' | 'Latin America'
 
 type OpenRouterStreamChunk = { choices?: Array<{ delta?: { content?: string } }> }
 
@@ -83,26 +149,131 @@ function isChartQuery(query: string, responseText: string): boolean {
   return hasChartIntent && hasQuantSignals
 }
 
-async function fetchWebContext(query: string): Promise<{ contextBlock: string; sources: { title: string; url: string }[] }> {
-  const response = await fetch('https://api.tavily.com/search', {
+const SOURCE_FILTER_DOMAINS: Record<SourceFilter, string[]> = {
+  'All Trusted': TRUSTED_NEWS_DOMAINS,
+  'Wire Only': ['reuters.com', 'apnews.com'],
+  Reuters: ['reuters.com'],
+  BBC: ['bbc.com'],
+  'Al Jazeera': ['aljazeera.com'],
+  Bloomberg: ['bloomberg.com'],
+  'Financial Times': ['ft.com'],
+}
+
+const REGION_HINTS: Record<RegionFilter, string> = {
+  Global: '',
+  'North America': 'North America United States Canada Mexico',
+  Europe: 'Europe EU UK France Germany Ukraine Russia',
+  'Middle East': 'Middle East Israel Gaza Iran Saudi Arabia Gulf',
+  Asia: 'Asia China India Pakistan Japan Korea Taiwan',
+  Africa: 'Africa Nigeria Egypt Ethiopia Kenya South Africa Sudan',
+  'Latin America': 'Latin America Brazil Argentina Chile Colombia Peru',
+}
+
+function buildFilteredQuery(query: string, recency: RecencyFilter, region: RegionFilter): string {
+  const recencyHint = recency === 'Latest' ? 'latest today' : recency === 'Past 24 Hours' ? 'past 24 hours' : 'past week'
+  const regionHint = REGION_HINTS[region]
+  return [query, recencyHint, regionHint].filter(Boolean).join(' ')
+}
+
+function buildSourcePerspectives(sources: SourceItem[]): SourcePerspective[] {
+  const seen = new Set<string>()
+  return sources
+    .map((source) => {
+      const outlet = extractSource(source.url)
+      if (seen.has(outlet)) return null
+      seen.add(outlet)
+      return {
+        source: outlet,
+        headline: source.title,
+        framing: source.content ? source.content.slice(0, 180) : 'Open this source to inspect framing details.',
+        url: source.url,
+      }
+    })
+    .filter(Boolean)
+    .slice(0, 6) as SourcePerspective[]
+}
+
+function safeArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
+function clampScore(value: unknown, fallback: number): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.max(0, Math.min(100, Math.round(numeric)))
+}
+
+function getBiasFallbackScore(bias?: string): number {
+  if (bias === 'Left') return 20
+  if (bias === 'Right') return 80
+  if (bias === 'Center') return 50
+  return 50
+}
+
+function normalizeBias(value: unknown): 'Left' | 'Center' | 'Right' | 'Unclear' {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'left') return 'Left'
+  if (normalized === 'right') return 'Right'
+  if (normalized === 'center' || normalized === 'centre') return 'Center'
+  return 'Unclear'
+}
+
+function deriveSentimentLabel(score: number): 'Negative' | 'Mixed' | 'Neutral' | 'Positive' {
+  if (score <= 35) return 'Negative'
+  if (score >= 65) return 'Positive'
+  if (score >= 45 && score <= 55) return 'Neutral'
+  return 'Mixed'
+}
+
+function deriveClaimFallbacks(text: string): ClaimItem[] {
+  const parts = text
+    .split(/[.!?\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 40)
+    .slice(0, 4)
+
+  return parts.map((p) => ({ text: p, status: 'Reported' as const }))
+}
+
+async function fetchWebContext(
+  query: string,
+  sourceFilter: SourceFilter,
+  recency: RecencyFilter,
+  region: RegionFilter,
+): Promise<{ contextBlock: string; sources: SourceItem[] }> {
+  const payload = {
+    api_key: import.meta.env.VITE_TAVILY_API_KEY,
+    query: buildFilteredQuery(query, recency, region),
+    search_depth: 'advanced',
+    max_results: 8,
+    include_domains: SOURCE_FILTER_DOMAINS[sourceFilter],
+    include_answer: false,
+    sort_by: 'date',
+  }
+
+  let response = await fetch('/api/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: import.meta.env.VITE_TAVILY_API_KEY,
-      query,
-      search_depth: 'advanced',
-      max_results: 8,
-      include_domains: [
-        'reuters.com', 'bbc.com', 'apnews.com', 'bloomberg.com', 'ft.com',
-        'theguardian.com', 'nytimes.com', 'wsj.com', 'aljazeera.com', 'economist.com'
-      ],
-      include_answer: false,
-    })
+    body: JSON.stringify(payload)
   });
+  if (!response.ok && import.meta.env.DEV) {
+    response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
+  if (import.meta.env.DEV && !response.headers.get('content-type')?.includes('application/json')) {
+    response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
   if (!response.ok) throw new Error('Tavily search failed');
   const data = await response.json();
   const results: TavilyResult[] = data.results || [];
-  const sources = results.map(r => ({ title: r.title, url: r.url }));
+  const sources = results.map(r => ({ title: r.title, url: r.url, content: r.content }));
   const contextBlock = results.map((r, i) =>
     `[${i + 1}] ${r.title}\nSource: ${r.url}\n${r.content}`
   ).join('\n\n');
@@ -200,6 +371,17 @@ const LimitReachedIcon = ({ size = 48 }: { size?: number }) => (
   </svg>
 )
 
+const FeedFallback = ({ label = 'Loading workspace' }: { label?: string }) => (
+  <div className="bn-page">
+    <div className="bn-loader">
+      <div className="bn-loader-orb">
+        <LogoIcon />
+      </div>
+      <span className="bn-loader-text">{label}...</span>
+    </div>
+  </div>
+)
+
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{ value: number }>;
@@ -257,6 +439,9 @@ function App() {
     return saved || 'dark';
   })
   const [language, setLanguage] = useState('English')
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('All Trusted')
+  const [recencyFilter, setRecencyFilter] = useState<RecencyFilter>('Latest')
+  const [regionFilter, setRegionFilter] = useState<RegionFilter>('Global')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [sessionId, setSessionId] = useState<string>(makeSessionId)
   const [history, setHistory] = useState<HistorySession[]>(() => {
@@ -280,6 +465,7 @@ function App() {
 
   const [streamingText, setStreamingText] = useState('')
   const [streamingSources, setStreamingSources] = useState<{ title: string, url: string }[] | null>(null)
+  const [loaderTick, setLoaderTick] = useState(0)
 
   const bottomAnchorRef = useRef<HTMLDivElement>(null)
 
@@ -370,6 +556,34 @@ function App() {
     bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, streamingText, isSearching])
 
+  // Rotate micro-status text while AI is working
+  useEffect(() => {
+    if (!isSearching || !loadingPhase) return
+    const interval = setInterval(() => setLoaderTick((n) => n + 1), 1400)
+    return () => clearInterval(interval)
+  }, [isSearching, loadingPhase])
+
+  const loaderSubMessages: Record<'web' | 'thinking' | 'responding', string[]> = {
+    web: [
+      'Scanning trusted sources',
+      'Filtering by relevance',
+      'Collecting latest developments',
+    ],
+    thinking: [
+      'Connecting facts across sources',
+      'Checking consistency and context',
+      'Structuring your brief',
+    ],
+    responding: [
+      'Writing your response',
+      'Refining clarity and tone',
+      'Preparing final brief',
+    ],
+  }
+
+  const dynamicLoaderSub =
+    loadingPhase ? loaderSubMessages[loadingPhase][loaderTick % loaderSubMessages[loadingPhase].length] : ''
+
   const runSearch = async (event?: FormEvent<HTMLFormElement>, queryOverride?: string) => {
     if (event) event.preventDefault()
 
@@ -417,12 +631,16 @@ function App() {
 
       if (shouldUseNewsSearch) {
         try {
-          const result = await fetchWebContext(cleanQuery);
+          const result = await fetchWebContext(cleanQuery, sourceFilter, recencyFilter, regionFilter);
           webContext = result.contextBlock;
           sources = result.sources;
           // Consume credits for each article fetched via Tavily
           if (sources.length > 0) {
-            consume(sources.length);
+            const hasCreditsForSources = consume(sources.length);
+            if (!hasCreditsForSources) {
+              webContext = '';
+              sources = [];
+            }
           }
         } catch (e) {
           console.warn('Tavily search failed, proceeding without web context:', e);
@@ -441,6 +659,7 @@ Response style:
 - Use concise or detailed format as needed; do not force a fixed template.
 - Use markdown only when it helps readability.
 - When relevant, cite supporting sources inline using [1], [2], etc.
+- Filters applied: ${sourceFilter}, ${recencyFilter}, ${regionFilter}.
 
 Here is live web search context to help you answer accurately:
 
@@ -493,6 +712,9 @@ Response style:
       }
 
       const assistantId = `assistant-${Date.now()}`;
+      const fallbackSentiment = clampScore(50, 50)
+      const fallbackBias = normalizeBias('Unclear')
+      const fallbackClaims = deriveClaimFallbacks(fullText)
       setMessages((currentMessages) => [
         ...currentMessages,
         {
@@ -500,6 +722,16 @@ Response style:
           role: 'assistant',
           text: fullText || "I'm sorry, I couldn't generate a report at this time.",
           sources,
+          sourcePerspectives: buildSourcePerspectives(sources),
+          sentiment: fallbackSentiment,
+          sentimentLabel: deriveSentimentLabel(fallbackSentiment),
+          sentimentConfidence: 50,
+          bias: fallbackBias,
+          biasScore: getBiasFallbackScore(fallbackBias),
+          biasConfidence: 50,
+          claims: fallbackClaims,
+          timeline: [],
+          relatedStories: [],
         }
       ]);
 
@@ -514,8 +746,20 @@ Response style:
       const metadataPrompt = `Based on the following news brief, analyze and return ONLY a single valid JSON object representing metadata. The JSON must have the following schema, and no other text:
 {
   "followUps": ["Q1", "Q2", "Q3"], // exactly 3 short follow-up questions
-  "sentiment": 75, // integer 0-100 indicating sentiment (0=very negative, 100=very positive)
-  "bias": "Left", // string: "Left", "Right", "Center", or "Unclear"
+  "sentiment": 75, // integer 0-100, where 0=very negative story impact/tone, 50=mixed/neutral, 100=very positive
+  "sentimentLabel": "Mixed", // string: "Negative", "Mixed", "Neutral", or "Positive"
+  "sentimentConfidence": 72, // integer 0-100, confidence in the sentiment assessment
+  "sentimentRationale": "One sentence explaining what factual evidence drives the score.",
+  "sentimentDrivers": [{"label": "Market selloff", "weight": 35, "direction": "Negative"}],
+  "bias": "Center", // string: "Left", "Right", "Center", or "Unclear"
+  "biasScore": 50, // integer 0-100, where 0=left-framed, 50=balanced/center, 100=right-framed
+  "biasConfidence": 65, // integer 0-100, confidence in the framing assessment
+  "biasRationale": "One sentence explaining observed framing, source balance, or why it is unclear.",
+  "biasSignals": [{"label": "Source mix", "evidence": "Most citations are straight-wire reports"}],
+  "claims": [{"text": "Specific factual claim", "status": "Reported"}],
+  "timeline": [{"time": "Today / Date / Sequence label", "event": "What changed", "source": "Optional source"}],
+  "relatedStories": [{"title": "Related story", "angle": "Background", "note": "Why it matters"}],
+  "entities": [{"name": "Entity", "type": "Country", "note": "Role in the story"}],
   "chartData": {
     "title": "Brief Chart Title",
     "data": [{"label": "Category A", "value": 50}]
@@ -524,6 +768,17 @@ Response style:
 
 Brief:
 ${fullText}
+
+Metadata rules:
+- Extract 3-6 claims and classify each status as exactly one of: Reported, Confirmed, Disputed, Unclear.
+- Sentiment must be based on the reported facts and wording in the brief, not on whether the topic is politically liked.
+- Bias must describe framing/source balance in this generated brief and cited sources, not a permanent rating of an outlet.
+- If evidence is thin, set bias to "Unclear", biasScore to 50, and lower biasConfidence.
+- Return 2-5 sentimentDrivers with weights that roughly explain the sentiment score.
+- Return 2-5 biasSignals grounded in source mix, word choice, omitted perspectives, or explicit framing.
+- Create a timeline only when the brief describes a developing sequence; otherwise return an empty array.
+- Return 2-5 relatedStories with angles chosen from: Background, Latest Update, Opposing Viewpoint, Economic Impact, Policy Impact, Other.
+- Return 3-8 entities mentioned in the brief.
 
 Chart eligibility:
 - Chart allowed for this query: ${allowChart ? 'YES' : 'NO'}
@@ -550,10 +805,28 @@ Follow-up eligibility:
         setMessages(currentMessages => currentMessages.map(msg =>
           msg.id === assistantId ? {
             ...msg,
+            bias: normalizeBias(meta.bias),
             followUps: allowFollowUps ? (meta.followUps?.slice(0, 3) || []) : [],
-            sentiment: meta.sentiment,
-            bias: meta.bias,
-            chartData: allowChart ? meta.chartData : undefined
+            sentiment: clampScore(meta.sentiment, msg.sentiment ?? 50),
+            sentimentLabel: (meta.sentimentLabel || msg.sentimentLabel || deriveSentimentLabel(msg.sentiment ?? 50)),
+            sentimentConfidence: clampScore(meta.sentimentConfidence, msg.sentimentConfidence ?? 50),
+            sentimentRationale: meta.sentimentRationale || msg.sentimentRationale,
+            sentimentDrivers: safeArray<SentimentDriver>(meta.sentimentDrivers).slice(0, 5),
+            biasScore: clampScore(meta.biasScore, msg.biasScore ?? getBiasFallbackScore(normalizeBias(meta.bias))),
+            biasConfidence: clampScore(meta.biasConfidence, msg.biasConfidence ?? 50),
+            biasRationale: meta.biasRationale || msg.biasRationale,
+            biasSignals: safeArray<BiasSignal>(meta.biasSignals).slice(0, 5),
+            chartData: allowChart ? meta.chartData : undefined,
+            claims: safeArray<ClaimItem>(meta.claims).slice(0, 6).length > 0
+              ? safeArray<ClaimItem>(meta.claims).slice(0, 6)
+              : (msg.claims && msg.claims.length > 0 ? msg.claims : deriveClaimFallbacks(msg.text)),
+            timeline: safeArray<TimelineItem>(meta.timeline).slice(0, 6).length > 0
+              ? safeArray<TimelineItem>(meta.timeline).slice(0, 6)
+              : (msg.timeline || []),
+            relatedStories: safeArray<RelatedStory>(meta.relatedStories).slice(0, 5).length > 0
+              ? safeArray<RelatedStory>(meta.relatedStories).slice(0, 5)
+              : (msg.relatedStories || []),
+            entities: safeArray<EntityItem>(meta.entities).slice(0, 8),
           } : msg
         ));
       } catch (e) {
@@ -603,7 +876,7 @@ Follow-up eligibility:
 
   return (
     <main className={shellClassName}>
-      {page === 'ai-mode' && showV1Notice && (
+      {page === 'ai-mode' && showV1Notice && !isConversationMode && (
         <section className="v1-notice" role="status" aria-live="polite">
           <div className="v1-notice-mascot" aria-hidden="true">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -894,26 +1167,36 @@ Follow-up eligibility:
 
       {page === 'breaking-news' ? (
         <section className="feed-shell">
-          <BreakingNews consume={consume} />
+          <Suspense fallback={<FeedFallback label="Loading breaking news" />}>
+            <BreakingNews consume={consume} />
+          </Suspense>
         </section>
       ) : page === 'developing' ? (
         <section className="feed-shell">
-          <Developing consume={consume} />
+          <Suspense fallback={<FeedFallback label="Loading developing stories" />}>
+            <Developing consume={consume} />
+          </Suspense>
         </section>
       ) : page === 'radar' ? (
         <section className="feed-shell">
-          <Radar consume={consume} credits={credits} limit={limit} />
+          <Suspense fallback={<FeedFallback label="Loading radar" />}>
+            <Radar consume={consume} credits={credits} limit={limit} />
+          </Suspense>
         </section>
       ) : page === 'heat-map' ? (
         <section className="feed-shell">
-          <HeatMap consume={consume} credits={credits} limit={limit} />
+          <Suspense fallback={<FeedFallback label="Loading heat map" />}>
+            <HeatMap consume={consume} credits={credits} limit={limit} />
+          </Suspense>
         </section>
       ) : page === 'account-settings' ? (
         <section className="feed-shell">
-          <AccountSettings
-            email={user.email || 'No email'}
-            displayName={displayName}
-          />
+          <Suspense fallback={<FeedFallback label="Loading settings" />}>
+            <AccountSettings
+              email={user.email || 'No email'}
+              displayName={displayName}
+            />
+          </Suspense>
         </section>
       ) : (
         <section className={searchShellClassName}>
@@ -1067,6 +1350,10 @@ Follow-up eligibility:
                               {message.sentiment}<span className="sentiment-denom">/100</span>
                             </span>
                           </div>
+                          <div className="meter-subhead">
+                            <span>{message.sentimentLabel || 'Mixed'}</span>
+                            {message.sentimentConfidence !== undefined && <span>{message.sentimentConfidence}% confidence</span>}
+                          </div>
                           <div className="progress-bar">
                             <div className="progress-fill" style={{ width: `${message.sentiment}%`, background: message.sentiment > 60 ? '#6ef0b9' : message.sentiment < 40 ? '#ff7a18' : '#ffd166' }}></div>
                           </div>
@@ -1082,6 +1369,20 @@ Follow-up eligibility:
                             <span>Neutral</span>
                             <span>Positive</span>
                           </div>
+                          {message.sentimentRationale && (
+                            <p className="meter-rationale">{message.sentimentRationale}</p>
+                          )}
+                          {message.sentimentDrivers && message.sentimentDrivers.length > 0 && (
+                            <div className="meter-evidence-list">
+                              {message.sentimentDrivers.map((driver, i) => (
+                                <div key={`${driver.label}-${i}`} className={`meter-evidence-item sentiment-${driver.direction.toLowerCase()}`}>
+                                  <span>{driver.direction}</span>
+                                  <p>{driver.label}</p>
+                                  <strong>{clampScore(driver.weight, 0)}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                       {message.bias && (
@@ -1089,6 +1390,10 @@ Follow-up eligibility:
                           <div className="bias-header">
                             <span className="meta-label">Bias Rating</span>
                             <span className={`bias-badge bias-${message.bias.toLowerCase()}`}>{message.bias}</span>
+                          </div>
+                          <div className="meter-subhead">
+                            <span>Framing score {message.biasScore ?? getBiasFallbackScore(message.bias)}/100</span>
+                            {message.biasConfidence !== undefined && <span>{message.biasConfidence}% confidence</span>}
                           </div>
                           <div className="bias-spectrum">
                             <div className="bias-track"></div>
@@ -1098,12 +1403,11 @@ Follow-up eligibility:
                             <div
                               className={`bias-marker ${message.bias.toLowerCase()}`}
                               style={{
-                                left: message.bias === 'Left' ? '10%' :
-                                  message.bias === 'Right' ? '90%' : '50%'
+                                left: `${message.biasScore ?? getBiasFallbackScore(message.bias)}%`
                               }}
                             >
                               <span className="bias-marker-value">
-                                {message.bias === 'Left' ? '10' : message.bias === 'Right' ? '90' : '50'}
+                                {message.biasScore ?? getBiasFallbackScore(message.bias)}
                               </span>
                             </div>
                           </div>
@@ -1112,8 +1416,110 @@ Follow-up eligibility:
                             <span>Center</span>
                             <span>Right</span>
                           </div>
+                          {message.biasRationale && (
+                            <p className="meter-rationale">{message.biasRationale}</p>
+                          )}
+                          {message.sources && message.sources.length > 0 && (
+                            <div className="source-balance-row">
+                              <span>{message.sources.length} cited sources</span>
+                              <span>{new Set(message.sources.map((source) => extractSource(source.url))).size} outlets</span>
+                            </div>
+                          )}
+                          {message.biasSignals && message.biasSignals.length > 0 && (
+                            <div className="meter-evidence-list">
+                              {message.biasSignals.map((signal, i) => (
+                                <div key={`${signal.label}-${i}`} className="meter-evidence-item bias-signal">
+                                  <span>{signal.label}</span>
+                                  <p>{signal.evidence}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {message.sourcePerspectives && message.sourcePerspectives.length > 0 && (
+                    <div className="intel-panel">
+                      <div className="intel-panel-header">
+                        <span>Source Comparison</span>
+                      </div>
+                      <div className="source-compare-grid">
+                        {message.sourcePerspectives.map((perspective) => (
+                          <a key={perspective.url} href={perspective.url} target="_blank" rel="noreferrer" className="source-compare-card">
+                            <strong>{perspective.source}</strong>
+                            <span>{perspective.headline}</span>
+                            <p>{perspective.framing}</p>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {message.claims && message.claims.length > 0 && (
+                    <div className="intel-panel">
+                      <div className="intel-panel-header">
+                        <span>Claims</span>
+                      </div>
+                      <div className="claim-list">
+                        {message.claims.map((claim, i) => (
+                          <div key={`${claim.status}-${i}`} className="claim-item">
+                            <span className={`claim-status status-${claim.status.toLowerCase()}`}>{claim.status}</span>
+                            <p>{claim.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {message.timeline && message.timeline.length > 0 && (
+                    <div className="intel-panel">
+                      <div className="intel-panel-header">
+                        <span>Timeline</span>
+                      </div>
+                      <div className="timeline-list">
+                        {message.timeline.map((item, i) => (
+                          <div key={`${item.time}-${i}`} className="timeline-item">
+                            <strong>{item.time}</strong>
+                            <p>{item.event}</p>
+                            {item.source && <span>{item.source}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {message.relatedStories && message.relatedStories.length > 0 && (
+                    <div className="intel-panel">
+                      <div className="intel-panel-header">
+                        <span>Related Stories</span>
+                      </div>
+                      <div className="related-grid">
+                        {message.relatedStories.map((story, i) => (
+                          <div key={`${story.title}-${i}`} className="related-card">
+                            <span>{story.angle}</span>
+                            <strong>{story.title}</strong>
+                            <p>{story.note}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {message.entities && message.entities.length > 0 && (
+                    <div className="intel-panel entity-panel">
+                      <div className="intel-panel-header">
+                        <span>Entity Tracking</span>
+                      </div>
+                      <div className="entity-list">
+                        {message.entities.map((entity, i) => (
+                          <span key={`${entity.name}-${i}`} className="entity-chip" title={entity.note}>
+                            {entity.name}
+                            <small>{entity.type}</small>
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -1188,9 +1594,9 @@ Follow-up eligibility:
                     <LogoIcon />
                   </div>
                   <div className="ai-loader-text">
-                    {loadingPhase === 'web' && <><span className="phase-label web">Searching the web</span><span className="phase-sub">Pulling live sources via Tavily</span></>}
-                    {loadingPhase === 'thinking' && <><span className="phase-label thinking">Thinking</span><span className="phase-sub">Analyzing sources & forming brief</span></>}
-                    {loadingPhase === 'responding' && <><span className="phase-label responding">Responding</span><span className="phase-sub">Writing your brief now</span></>}
+                    {loadingPhase === 'web' && <><span className="phase-label web">Searching the web</span><span className="phase-sub">{dynamicLoaderSub}<span className="typing-dots"><span>.</span><span>.</span><span>.</span></span></span></>}
+                    {loadingPhase === 'thinking' && <><span className="phase-label thinking">Thinking</span><span className="phase-sub">{dynamicLoaderSub}<span className="typing-dots"><span>.</span><span>.</span><span>.</span></span></span></>}
+                    {loadingPhase === 'responding' && <><span className="phase-label responding">Responding</span><span className="phase-sub">{dynamicLoaderSub}<span className="typing-dots"><span>.</span><span>.</span><span>.</span></span></span></>}
                   </div>
                 </div>
               </article>
