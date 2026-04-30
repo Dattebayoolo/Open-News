@@ -24,6 +24,12 @@ export default async function handler(request, response) {
   }
 
   const body = typeof request.body === 'string' ? JSON.parse(request.body || '{}') : request.body || {}
+
+  if (!body.query || typeof body.query !== 'string') {
+    response.status(400).json({ error: 'Invalid query parameter' })
+    return
+  }
+
   const tavilyResponse = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -39,5 +45,9 @@ export default async function handler(request, response) {
   })
 
   const data = await tavilyResponse.json()
+
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  response.setHeader('Pragma', 'no-cache')
   response.status(tavilyResponse.status).json(data)
 }

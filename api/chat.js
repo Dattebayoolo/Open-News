@@ -11,6 +11,12 @@ export default async function handler(request, response) {
   }
 
   const body = typeof request.body === 'string' ? JSON.parse(request.body || '{}') : request.body || {}
+
+  if (!body.messages || !Array.isArray(body.messages)) {
+    response.status(400).json({ error: 'Invalid request: messages array required' })
+    return
+  }
+
   const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -26,5 +32,8 @@ export default async function handler(request, response) {
   upstream.headers.forEach((value, key) => {
     if (key.toLowerCase() === 'content-type') response.setHeader(key, value)
   })
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  response.setHeader('Pragma', 'no-cache')
   response.send(await upstream.text())
 }
